@@ -13,6 +13,9 @@ curl -I https://marijndehaan-svg.github.io/balinium-video-host/
 
 Expect `HTTP/2 200`. The first deploy can take up to 10 minutes.
 
+Status as of 17 Sep 2026: live and serving. Verified that `/manifest.json` and
+`/videos/` both return 200.
+
 ## 2. TikTok URL-prefix verification (Ayesha)
 
 One correction before starting. The token that was circulated,
