@@ -38,8 +38,19 @@ Planner row ID so a video can always be traced back to its script.
 ## Limits worth knowing before a bulk upload
 
 - 100 MB hard limit per file. Git rejects anything larger.
-- 1 GB soft limit on total repo size. At roughly 20 MB per clip that is about 50
-  videos. Past that, prune old videos or move to real object storage.
+- 1 GB soft limit on total repo size. **Compress before committing.** Measured on
+  TT-20 (17 Sep): the Drive source was 67 MB for 15 seconds, straight off a phone
+  at 38 Mbps. At that size the repo holds about 14 clips and the batch of 34 would
+  need 2.3 GB, well over the limit. Re-encoded it is 4.5 MB with no visible loss at
+  TikTok playback, which puts the whole batch near 150 MB. Use:
+
+  ```
+  ffmpeg -i in.mov -c:v libx264 -preset medium -crf 23 -r 30 \
+         -c:a aac -b:a 128k -movflags +faststart out.mp4
+  ```
+
+  `-movflags +faststart` matters: it moves the index to the front so TikTok's
+  fetcher does not have to pull the whole file before it can start.
 - 100 GB/month soft bandwidth limit on Pages. TikTok fetches each file once at post
   time, so this is not a realistic ceiling for this use.
 - Pages serves .mp4 as `video/mp4` and supports range requests, which is what the
