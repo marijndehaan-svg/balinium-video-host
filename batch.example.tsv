@@ -1,0 +1,5 @@
+# Copy this to batch.tsv and edit. Columns: <planner id> <drive-file-id> <slug>
+# Separated by spaces or tabs. Lines starting with # are ignored.
+#
+# id   drive-file-id                       slug
+20     1-EDi8MXupIDkiy_vO-nhk8HxxVlXi_7Q   bangle-gold-bedsheet
