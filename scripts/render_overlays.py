@@ -121,10 +121,10 @@ def due_rows():
     return rows
 
 
-def mark_ready_for_qa(row, url):
+def mark_ready_for_qa(row, url, note=""):
     stamp = dt.datetime.now(WIB).strftime("%d %b %H:%M")
-    line = (f"OVERLAY RENDERED {stamp} WIB: hook burned in, file at Hosted video URL. "
-            f"Ayesha: watch it, then set Status = Ready (or back to Editing with a note).")
+    line = (f"OVERLAY RENDERED {stamp} WIB: hook burned in, file at Hosted video URL. {note} "
+            f"Ayesha: watch it, then set Status = Ready (or back to Editing with a note).").replace("  ", " ")
     notes = (line + ("\n\n" + row["notes"] if row["notes"] else ""))[:1990]
     resp = requests.patch(f"{NOTION_API}/pages/{row['id']}", headers=headers(), timeout=30, json={
         "properties": {
@@ -210,14 +210,27 @@ def probe(path: Path):
     return w, h, float(vals.get("duration", 0) or 0)
 
 
-def render(src: Path, png: Path, out: Path):
+def render(src: Path, png: Path, out: Path, boomerang=False):
     # Fill 9:16 (scale to cover, centre crop), then lay the hook on top.
-    vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-          f"setsar=1,fps=30[b];[b][1:v]overlay=0:0,format=yuv420p[v]")
+    # boomerang: clips under TikTok's 3-second minimum play forward then
+    # backward, which doubles them without a jump cut. The reverse runs after
+    # the downscale, so it buffers 1080p frames, not 4K ones.
+    base = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+            f"setsar=1,fps=30")
+    if boomerang:
+        vf = (f"{base},split[f][r0];[r0]reverse[r];[f][r]concat=n=2:v=1:a=0[b];"
+              f"[b][1:v]overlay=0:0,format=yuv420p[v]")
+        audio = ["-an"]  # the source audio would play backwards; the sound is added in TikTok
+    else:
+        vf = f"{base}[b];[b][1:v]overlay=0:0,format=yuv420p[v]"
+        audio = ["-map", "0:a?", "-c:a", "aac", "-b:a", "128k"]
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src), "-i", str(png),
-           "-filter_complex", vf, "-map", "[v]", "-map", "0:a?",
+           "-filter_complex", vf, "-map", "[v]", *audio,
            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-           "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)]
+           # TikTok re-encodes on upload; the cap keeps noisy 4K sources from
+           # filling this repo's 1 GB soft limit (TT-27 was 49 MB uncapped).
+           "-maxrate", "6M", "-bufsize", "12M",
+           "-movflags", "+faststart", str(out)]
     subprocess.run(cmd, check=True)
 
 
@@ -276,25 +289,30 @@ def main():
             problems.append(f"{label}: Drive download refused (share it as 'anyone with the link')")
             continue
         w, h, dur = probe(src)
-        if dur < 3:
-            problems.append(f"{label}: source is {dur:.1f}s, TikTok needs at least 3s")
+        if dur < 1.5:
+            problems.append(f"{label}: source is {dur:.1f}s, too short even played forward and back")
             continue
+        boomerang = dur < 3
         png = WORK / f"{name}.hook.png"
         hook_png(row["hook"], png)
         out = OUT / name
-        render(src, png, out)
-        note = "" if h >= w else " (landscape source, centre-cropped to 9:16: check framing)"
-        print(f"RENDERED {label} -> {name} ({out.stat().st_size / 1_048_576:.1f} MB, {dur:.0f}s){note}")
-        done.append((row, name, out.stat().st_size))
+        render(src, png, out, boomerang=boomerang)
+        note = ""
+        if boomerang:
+            note += f" Source was {dur:.1f}s (TikTok needs 3s), so it plays forward then backward ({2 * dur:.1f}s)."
+        if w > h:
+            note += " Landscape source, centre-cropped to 9:16: check the jewelry is in frame."
+        print(f"RENDERED {label} -> {name} ({out.stat().st_size / 1_048_576:.1f} MB){note}")
+        done.append((row, name, out.stat().st_size, note.strip()))
 
     if args.push and done:
-        git("add", *[f"videos/{n}" for _, n, _ in done])
+        git("add", *[f"videos/{n}" for _, n, _, _ in done])
         git("commit", "-m", f"Render {len(done)} planner video(s) with burned-in hook")
         git("push", "-q", "origin", "HEAD")
-        for row, name, size in done:
+        for row, name, size, note in done:
             url = BASE_URL + name
             if wait_served(url, size):
-                mark_ready_for_qa(row, url)
+                mark_ready_for_qa(row, url, note)
                 print(f"QA     TT-{row['num']} -> Ready for QA, {url}")
             else:
                 problems.append(f"TT-{row['num']}: pushed but Pages did not serve {name} within 10 min; row not updated")
