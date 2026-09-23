@@ -110,6 +110,8 @@ def due_rows():
     rows = []
     for page in resp.json()["results"]:
         p = page["properties"]
+        if text(p, "Notes").startswith("RENDER PROBLEM"):
+            continue  # waits until a person fixes it and deletes that line
         rows.append({
             "id": page["id"],
             "num": text(p, "ID"),
@@ -133,6 +135,14 @@ def mark_ready_for_qa(row, url, note=""):
             "Notes": {"rich_text": [{"text": {"content": notes}}]},
         }})
     resp.raise_for_status()
+
+
+def flag_problem(row, message):
+    stamp = dt.datetime.now(WIB).strftime("%d %b %H:%M")
+    line = f"RENDER PROBLEM {stamp} WIB: {message} Fix it, then delete this line to retry."
+    notes = (line + ("\n\n" + row["notes"] if row["notes"] else ""))[:1990]
+    requests.patch(f"{NOTION_API}/pages/{row['id']}", headers=headers(), timeout=30,
+                   json={"properties": {"Notes": {"rich_text": [{"text": {"content": notes}}]}}})
 
 
 # -- Drive --------------------------------------------------------------------
@@ -280,6 +290,8 @@ def main():
         label = f"TT-{row['num']} {row['title'][:45]}"
         if not row["drive"]:
             problems.append(f"{label}: no Google Drive link in Video file")
+            if args.push:
+                flag_problem(row, "No Google Drive link in Video file.")
             continue
         if not (args.render or args.push):
             print(f"WOULD RENDER {label} -> {name} | hook: {row['hook']}")
@@ -287,10 +299,14 @@ def main():
         src = WORK / f"{name}.src"
         if not download(row["drive"], src):
             problems.append(f"{label}: Drive download refused (share it as 'anyone with the link')")
+            if args.push:
+                flag_problem(row, "Drive refused the download: share the file as 'anyone with the link'.")
             continue
         w, h, dur = probe(src)
         if dur < 1.5:
             problems.append(f"{label}: source is {dur:.1f}s, too short even played forward and back")
+            if args.push:
+                flag_problem(row, f"Source is {dur:.1f}s; TikTok needs 3s even played forward and back.")
             continue
         boomerang = dur < 3
         png = WORK / f"{name}.hook.png"
@@ -308,7 +324,19 @@ def main():
     if args.push and done:
         git("add", *[f"videos/{n}" for _, n, _, _ in done])
         git("commit", "-m", f"Render {len(done)} planner video(s) with burned-in hook")
-        git("push", "-q", "origin", "HEAD")
+        for attempt in range(4):  # large uploads time out on a slow line (HTTP 408, 23 Sep)
+            try:
+                git("-c", "http.postBuffer=524288000", "push", "-q", "origin", "HEAD")
+                break
+            except subprocess.CalledProcessError:
+                if attempt == 3:
+                    raise
+                time.sleep(30)
+        repo = os.environ.get("GITHUB_REPOSITORY")
+        if repo and os.environ.get("GH_TOKEN"):
+            # A push made with the Actions token may not start a Pages build.
+            subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pages/builds"],
+                           capture_output=True)
         for row, name, size, note in done:
             url = BASE_URL + name
             if wait_served(url, size):

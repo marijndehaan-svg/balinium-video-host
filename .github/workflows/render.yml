@@ -1,0 +1,57 @@
+# Burns the approved hook into TikTok Content Planner videos, hourly.
+#
+# Picks up rows in Status = Editing, Edit tier 2, Native check = Approved (the
+# moment Winda approves the Bahasa, the next run renders it), hosts the file on
+# this repo's GitHub Pages and moves the row to "Ready for QA" for Ayesha.
+# See scripts/render_overlays.py.
+#
+# Needs one repo secret, NOTION_TOKEN (the same integration token the
+# balinium-finance jobs use). Without it the run skips and stays green.
+name: Render planner overlays
+
+on:
+  schedule:
+    - cron: "15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: render-overlays
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip without a Notion token
+        id: gate
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: |
+          if [ -z "$NOTION_TOKEN" ]; then
+            echo "NOTION_TOKEN secret not set on this repo; nothing to do."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: steps.gate.outputs.run == 'true'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q pillow requests
+          git config user.name "balinium-render-bot"
+          git config user.email "actions@users.noreply.github.com"
+      - if: steps.gate.outputs.run == 'true'
+        name: Render, host, hand to QA
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/render_overlays.py --push
