@@ -4,9 +4,15 @@ Burns the approved hook line into planner videos and hosts the result.
 Picks up every TikTok Content Planner row where
     Status       = Editing
     Edit tier    = 2 Text overlay hook
-    Native check = Approved          <- Winda's Bahasa check is the hard stop
+    Ayesha check = Looks good        <- check 1, the English
+    Winda check  = Approved          <- check 2, the Bahasa: the hard stop
+                   (read from "Native check" while the column has its old name)
     Hook (ID)    is filled
     Video file   holds a Google Drive link (shared "anyone with the link")
+    System notes holds no RENDER PROBLEM line
+The two checks are applied in Python, not in the Notion query: a filter on a
+column that does not exist returns HTTP 400, so filtering on either name would
+break during the rename. Machine messages go in "System notes", newest on top.
 and for each one:
     1. downloads the source from Drive (cached in .work/),
     2. renders Hook (ID) in TikTok Sans inside TikTok's UI safe zone,
@@ -49,6 +55,12 @@ BASE_URL = "https://marijndehaan-svg.github.io/balinium-video-host/videos/"
 NOTION_API = "https://api.notion.com/v1"
 PLANNER = "35305bbb-3d85-42a6-a2ab-3467ab9f1671"
 WIB = dt.timezone(dt.timedelta(hours=7))
+
+# Planner columns in transition (Reviews logic, 25 Sep 2026): the new name
+# first, the old one as fallback, chosen by whether the column exists.
+BAHASA_CHECK = ("Winda check", "Native check")
+MACHINE_NOTES = ("System notes", "Notes")
+PROBLEM_TAG = "RENDER PROBLEM"
 
 W, H = 1080, 1920
 # TikTok's UI covers the top tabs, the right-hand button rail and the bottom
@@ -97,11 +109,22 @@ def drive_id(props) -> str:
     return ""
 
 
-def due_rows():
+def column(props, names):
+    """The first of `names` that exists as a column on this page."""
+    for name in names:
+        if name in props:
+            return name
+    return names[-1]
+
+
+def prepend(line, existing):
+    return (line + ("\n\n" + existing if existing else ""))[:1990]
+
+
+def due_rows(waiting=None):
     body = {"page_size": 100, "filter": {"and": [
         {"property": "Status", "select": {"equals": "Editing"}},
         {"property": "Edit tier", "select": {"equals": "2 Text overlay hook"}},
-        {"property": "Native check", "select": {"equals": "Approved"}},
         {"property": "Hook (ID)", "rich_text": {"is_not_empty": True}},
     ]}, "sorts": [{"property": "Publish at", "direction": "ascending"}]}
     resp = requests.post(f"{NOTION_API}/data_sources/{PLANNER}/query",
@@ -110,14 +133,28 @@ def due_rows():
     rows = []
     for page in resp.json()["results"]:
         p = page["properties"]
-        if text(p, "Notes").startswith("RENDER PROBLEM"):
-            continue  # waits until a person fixes it and deletes that line
+        notes_col = column(p, MACHINE_NOTES)
+        bahasa_col = column(p, BAHASA_CHECK)
+        notes = text(p, notes_col).strip()
+        label = f"TT-{text(p, 'ID')} {text(p, 'Video')[:45]}"
+        reason = None
+        if PROBLEM_TAG in notes:
+            reason = f"a {PROBLEM_TAG} line is in {notes_col}: fix it, then delete that line"
+        elif "Ayesha check" in p and text(p, "Ayesha check") != "Looks good":
+            reason = f"Ayesha check is '{text(p, 'Ayesha check') or 'empty'}', not Looks good"
+        elif text(p, bahasa_col) != "Approved":
+            reason = f"{bahasa_col} is '{text(p, bahasa_col) or 'empty'}', not Approved"
+        if reason:
+            if waiting is not None:
+                waiting.append(f"{label}: {reason}")
+            continue  # waits for people
         rows.append({
             "id": page["id"],
             "num": text(p, "ID"),
             "title": text(p, "Video"),
             "hook": text(p, "Hook (ID)").strip(),
-            "notes": text(p, "Notes").strip(),
+            "notes_col": notes_col,
+            "notes": notes,
             "drive": drive_id(p),
         })
     return rows
@@ -127,22 +164,21 @@ def mark_ready_for_qa(row, url, note=""):
     stamp = dt.datetime.now(WIB).strftime("%d %b %H:%M")
     line = (f"OVERLAY RENDERED {stamp} WIB: hook burned in, file at Hosted video URL. {note} "
             f"Ayesha: watch it, then set Status = Ready (or back to Editing with a note).").replace("  ", " ")
-    notes = (line + ("\n\n" + row["notes"] if row["notes"] else ""))[:1990]
     resp = requests.patch(f"{NOTION_API}/pages/{row['id']}", headers=headers(), timeout=30, json={
         "properties": {
             "Hosted video URL": {"url": url},
             "Status": {"select": {"name": "Ready for QA"}},
-            "Notes": {"rich_text": [{"text": {"content": notes}}]},
+            row["notes_col"]: {"rich_text": [{"text": {"content": prepend(line, row["notes"])}}]},
         }})
     resp.raise_for_status()
 
 
 def flag_problem(row, message):
     stamp = dt.datetime.now(WIB).strftime("%d %b %H:%M")
-    line = f"RENDER PROBLEM {stamp} WIB: {message} Fix it, then delete this line to retry."
-    notes = (line + ("\n\n" + row["notes"] if row["notes"] else ""))[:1990]
+    line = f"{PROBLEM_TAG} {stamp} WIB: {message} Fix it, then delete this line to retry."
     requests.patch(f"{NOTION_API}/pages/{row['id']}", headers=headers(), timeout=30,
-                   json={"properties": {"Notes": {"rich_text": [{"text": {"content": notes}}]}}})
+                   json={"properties": {row["notes_col"]: {"rich_text": [
+                       {"text": {"content": prepend(line, row["notes"])}}]}}})
 
 
 # -- Drive --------------------------------------------------------------------
@@ -278,9 +314,12 @@ def main():
     WORK.mkdir(exist_ok=True)
     OUT.mkdir(exist_ok=True)
 
-    rows = due_rows()
+    waiting = []
+    rows = due_rows(waiting)
     if args.only:
         rows = [r for r in rows if r["num"] == args.only]
+    for w in waiting:
+        print(f"WAITING {w}")
     if not rows:
         print("Nothing to render.")
         return
