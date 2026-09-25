@@ -159,7 +159,8 @@ def due_rows(waiting=None):
 def mark_ready_for_qa(row, url, note=""):
     stamp = dt.datetime.now(WIB).strftime("%d %b %H:%M")
     line = (f"OVERLAY RENDERED {stamp} WIB: hook burned in, file at Hosted video URL. {note} "
-            f"Ayesha: watch it, then set Status = Ready (or back to Editing with a note).").replace("  ", " ")
+            f"Ayesha: watch it, then set Status = Ready. Something wrong: set Ayesha check = Needs edit "
+            f"and say what in Ayesha notes; Claude fixes it (tab 6).").replace("  ", " ")
     resp = requests.patch(f"{NOTION_API}/pages/{row['id']}", headers=headers(), timeout=30, json={
         "properties": {
             "Hosted video URL": {"url": url},
