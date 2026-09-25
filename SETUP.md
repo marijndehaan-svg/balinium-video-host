@@ -104,7 +104,8 @@ before her first push will work.
 
 ## 4. What this does not solve
 
-Hosting removes the fetch-URL blocker only. The 32 scripted rows are all sitting at
-`Native check = Needed` and stay unpostable until Winda signs off on the Bahasa copy.
+Hosting removes the fetch-URL blocker only. A row stays unpostable until Ayesha
+sets `Ayesha check = Looks good` on the English and Winda sets `Winda check =
+Approved` on the Bahasa copy (renamed from `Native check` on 25 Sep 2026).
 That gate is a human approval on public-facing copy and should not be automated away
 just because the pipeline is now technically able to post.

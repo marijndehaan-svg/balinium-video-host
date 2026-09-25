@@ -1,7 +1,7 @@
 # Burns the approved hook into TikTok Content Planner videos, hourly.
 #
 # Picks up rows in Status = Editing, Edit tier 2, with Ayesha check = Looks good
-# and Winda check (while renamed: Native check) = Approved: the next run after
+# and Winda check = Approved: the next run after
 # both checks renders it, hosts the file on this repo's GitHub Pages and moves
 # the row to "Ready for QA" for Ayesha. Messages go in System notes; a
 # RENDER PROBLEM line parks the row until a person deletes it.

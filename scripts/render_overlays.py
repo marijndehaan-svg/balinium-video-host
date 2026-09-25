@@ -6,13 +6,12 @@ Picks up every TikTok Content Planner row where
     Edit tier    = 2 Text overlay hook
     Ayesha check = Looks good        <- check 1, the English
     Winda check  = Approved          <- check 2, the Bahasa: the hard stop
-                   (read from "Native check" while the column has its old name)
     Hook (ID)    is filled
     Video file   holds a Google Drive link (shared "anyone with the link")
     System notes holds no RENDER PROBLEM line
-The two checks are applied in Python, not in the Notion query: a filter on a
-column that does not exist returns HTTP 400, so filtering on either name would
-break during the rename. Machine messages go in "System notes", newest on top.
+The two checks are applied in Python, not in the Notion query, so the listing
+can say why each held row waits. Machine messages go in "System notes", newest
+on top. A missing column stops the run with an error instead of skipping rows.
 and for each one:
     1. downloads the source from Drive (cached in .work/),
     2. renders Hook (ID) in TikTok Sans inside TikTok's UI safe zone,
@@ -56,10 +55,12 @@ NOTION_API = "https://api.notion.com/v1"
 PLANNER = "35305bbb-3d85-42a6-a2ab-3467ab9f1671"
 WIB = dt.timezone(dt.timedelta(hours=7))
 
-# Planner columns in transition (Reviews logic, 25 Sep 2026): the new name
-# first, the old one as fallback, chosen by whether the column exists.
-BAHASA_CHECK = ("Winda check", "Native check")
-MACHINE_NOTES = ("System notes", "Notes")
+# The planner columns the gate reads (Reviews logic, 25 Sep 2026). Renaming one
+# in Notion means changing it here in the same push: a missing column stops the
+# run with an error, red in GitHub Actions, instead of skipping every row silently.
+AYESHA_CHECK = "Ayesha check"
+BAHASA_CHECK = "Winda check"
+MACHINE_NOTES = "System notes"
 PROBLEM_TAG = "RENDER PROBLEM"
 
 W, H = 1080, 1920
@@ -109,14 +110,6 @@ def drive_id(props) -> str:
     return ""
 
 
-def column(props, names):
-    """The first of `names` that exists as a column on this page."""
-    for name in names:
-        if name in props:
-            return name
-    return names[-1]
-
-
 def prepend(line, existing):
     return (line + ("\n\n" + existing if existing else ""))[:1990]
 
@@ -133,17 +126,20 @@ def due_rows(waiting=None):
     rows = []
     for page in resp.json()["results"]:
         p = page["properties"]
-        notes_col = column(p, MACHINE_NOTES)
-        bahasa_col = column(p, BAHASA_CHECK)
+        missing = [c for c in (AYESHA_CHECK, BAHASA_CHECK, MACHINE_NOTES) if c not in p]
+        if missing:
+            sys.exit(f"planner column(s) {missing} not found: renamed in Notion? "
+                     "Change the names in scripts/render_overlays.py in the same push.")
+        notes_col = MACHINE_NOTES
         notes = text(p, notes_col).strip()
         label = f"TT-{text(p, 'ID')} {text(p, 'Video')[:45]}"
         reason = None
         if PROBLEM_TAG in notes:
             reason = f"a {PROBLEM_TAG} line is in {notes_col}: fix it, then delete that line"
-        elif "Ayesha check" in p and text(p, "Ayesha check") != "Looks good":
-            reason = f"Ayesha check is '{text(p, 'Ayesha check') or 'empty'}', not Looks good"
-        elif text(p, bahasa_col) != "Approved":
-            reason = f"{bahasa_col} is '{text(p, bahasa_col) or 'empty'}', not Approved"
+        elif text(p, AYESHA_CHECK) != "Looks good":
+            reason = f"{AYESHA_CHECK} is '{text(p, AYESHA_CHECK) or 'empty'}', not Looks good"
+        elif text(p, BAHASA_CHECK) != "Approved":
+            reason = f"{BAHASA_CHECK} is '{text(p, BAHASA_CHECK) or 'empty'}', not Approved"
         if reason:
             if waiting is not None:
                 waiting.append(f"{label}: {reason}")

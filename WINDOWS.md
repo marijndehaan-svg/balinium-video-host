@@ -130,5 +130,5 @@ if a clip is still large. Do not drop `-movflags +faststart`.
 - **This repo is public and git history keeps deleted files.** Nothing goes in
   here that is not cleared for publication.
 - **Hosting is not approval.** A file being live at a URL does not mean the post
-  is cleared. Every row still needs `Native check = Approved` from Winda before
-  anything goes out.
+  is cleared. Every row still needs `Ayesha check = Looks good` (the English) and
+  `Winda check = Approved` (the Bahasa) before anything goes out.
